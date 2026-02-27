@@ -42,7 +42,12 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 #if DEBUG
     RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
 #else
-    Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+    // OTA override: if there is an active OTA bundle on disk, use it.
+    // Falls back to the shipped main.jsbundle if nil.
+    if let otaURL = OtaBundleManager.shared.activeBundleURL {
+      return otaURL
+    }
+    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
   }
 }

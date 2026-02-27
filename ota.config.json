@@ -1,0 +1,6 @@
+{
+  "serverUrl": "http://localhost:3000",
+  "secret": "dev-secret",
+  "channel": "production",
+  "appVersion": ">=1.0.0"
+}

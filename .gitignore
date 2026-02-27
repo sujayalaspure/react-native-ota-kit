@@ -73,3 +73,14 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# OTA Server — runtime data (not committed)
+packages/ota-server/data/
+packages/ota-server/uploads/
+
+# OTA CLI — build output
+ota-output/
+
+# TypeScript build outputs
+packages/*/dist/
+tools/*/dist/

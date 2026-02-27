@@ -2,12 +2,20 @@
   "name": "RNAppOta",
   "version": "0.0.1",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "tools/*"
+  ],
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "ota:server": "yarn workspace ota-server start",
+    "ota:server:dev": "yarn workspace ota-server dev",
+    "ota:bundle": "yarn workspace ota-cli bundle",
+    "ota:publish": "yarn workspace ota-cli publish"
   },
   "dependencies": {
     "react": "19.2.3",
