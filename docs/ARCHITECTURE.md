@@ -6,52 +6,55 @@ This is a self-hosted, CodePush-free OTA (Over-the-Air) update system for React 
 
 The system has four main components:
 
-| Component       | Language      | Location                        | Role                                     |
-|-----------------|---------------|---------------------------------|------------------------------------------|
-| OTA Server      | TypeScript    | `packages/ota-server/`          | Stores and serves update bundles         |
-| OTA CLI         | Node.js       | `tools/ota-cli/`                | Bundles JS and publishes to server       |
-| OTA SDK (JS)    | TypeScript    | `packages/ota-sdk/`             | Client logic — check, download, apply    |
-| Native Layer    | Kotlin/Swift  | `android/` / `ios/`             | File I/O, bundle path selection, restart |
+| Component        | Language   | Location                 | Role                                      |
+|------------------|------------|--------------------------|-------------------------------------------|
+| OTA Server       | TypeScript | `packages/ota-server/`   | Stores and serves update bundles          |
+| OTA CLI          | Node.js    | `tools/ota-cli/`         | Bundles JS and publishes to server        |
+| OTA SDK (JS)     | TypeScript | `packages/ota-sdk/`      | Client logic — check, download, apply     |
+| Native (Android) | Kotlin     | `android/`               | File I/O, bundle path selection, restart  |
+| Native (iOS)     | Swift      | `ios/`                   | File I/O, bundle path selection, reload   |
 
 ---
 
 ## High-Level Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Developer Machine                          │
-│                                                                     │
+┌────────────────────────────────────────────────────────────────────┐
+│                          Developer Machine                         │
+│                                                                    │
 │   ┌─────────────┐     bundle + publish     ┌────────────────────┐  │
 │   │   ota-cli   │ ─────────────────────>   │    OTA Server      │  │
 │   │  (Node CLI) │                          │  (Express + SQLite)│  │
 │   └─────────────┘                          └────────────────────┘  │
-│                                                      │              │
+│                                                      │             │
 └──────────────────────────────────────────────────────┼─────────────┘
-                                                       │ HTTP (LAN / Internet)
-                                         ┌─────────────▼──────────────┐
-                                         │        Android Device       │
-                                         │                             │
-                                         │  ┌─────────────────────┐   │
-                                         │  │   Native Layer      │   │
-                                         │  │  (Kotlin)           │   │
-                                         │  │  OtaBundleManager   │   │
-                                         │  │  OtaUpdateModule    │   │
-                                         │  └──────────┬──────────┘   │
-                                         │             │               │
-                                         │  ┌──────────▼──────────┐   │
-                                         │  │   JS Layer (SDK)    │   │
-                                         │  │  OtaClient          │   │
-                                         │  │  OtaUpdater         │   │
-                                         │  │  OtaStorage         │   │
-                                         │  │  crashGuard         │   │
-                                         │  └──────────┬──────────┘   │
-                                         │             │               │
-                                         │  ┌──────────▼──────────┐   │
-                                         │  │     App UI          │   │
-                                         │  │   OtaBanner         │   │
-                                         │  │   useOtaUpdate()    │   │
-                                         │  └─────────────────────┘   │
-                                         └─────────────────────────────┘
+                                                       │ HTTP
+                          ┌────────────────────────────┴──────────────────┐
+                          │                                               │
+           ┌──────────────▼─────────────┐                  ┌──────────────▼─────────────┐
+           │        Android Device      │                  │         iOS Device         │
+           │                            │                  │                            │
+           │  ┌─────────────────────┐   │                  │  ┌─────────────────────┐   │
+           │  │   Native Layer      │   │                  │  │   Native Layer      │   │
+           │  │  (Kotlin)           │   │                  │  │  (Swift)            │   │
+           │  │  OtaBundleManager   │   │                  │  │  OtaBundleManager   │   │
+           │  │  OtaUpdateModule    │   │                  │  │  OtaUpdateModule    │   │
+           │  │  MainApplication    │   │                  │  │  AppDelegate        │   │
+           │  └──────────┬──────────┘   │                  │  └──────────┬──────────┘   │
+           │             │              │                  │             │              │
+           │  ┌──────────▼──────────┐   │                  │  ┌──────────▼──────────┐   │
+           │  │   JS Layer (SDK)    │   │                  │  │   JS Layer (SDK)    │   │
+           │  │  OtaClient          │   │                  │  │  OtaClient          │   │
+           │  │  OtaUpdater         │   │                  │  │  OtaUpdater         │   │
+           │  │  OtaStorage         │   │                  │  │  OtaStorage         │   │
+           │  │  crashGuard         │   │                  │  │  crashGuard         │   │
+           │  └──────────┬──────────┘   │                  │  └──────────┬──────────┘   │
+           │             │              │                  │             │              │
+           │  ┌──────────▼──────────┐   │                  │  ┌──────────▼──────────┐   │
+           │  │     App UI          │   │                  │  │     App UI          │   │
+           │  │   OtaBanner         │   │                  │  │   OtaBanner         │   │
+           │  └─────────────────────┘   │                  │  └─────────────────────┘   │
+           └────────────────────────────┘                  └────────────────────────────┘
 ```
 
 ---
@@ -60,55 +63,40 @@ The system has four main components:
 
 ### 1. OTA CLI (`tools/ota-cli/`)
 
-Runs on the developer machine. Two main commands:
-
-- **bundle**: Runs Metro bundler to produce a JS bundle + assets → zips them → computes SHA-256
-- **publish**: Uploads the ZIP to the OTA server via multipart form POST
-
-```
-ota-cli bundle  → [Metro] → index.android.bundle + assets → zip → SHA-256
-ota-cli publish → POST /v1/publish (ZIP + metadata + secret)
-```
-
----
+- **bundle**: Metro bundler → JS bundle + assets → ZIP → SHA-256
+- **publish**: `POST /v1/publish` multipart form with ZIP + metadata
 
 ### 2. OTA Server (`packages/ota-server/`)
 
-Express.js REST API backed by SQLite (better-sqlite3).
-
-**Responsibilities:**
-- Accept and store uploaded bundles
-- Compare `currentLabel` vs latest release to determine if update is available
-- Serve ZIP files for download
-- Record install/rollback reports from devices
-
-**Storage:**
-- ZIPs stored on disk (`packages/ota-server/data/bundles/`)
-- Metadata in SQLite (`packages/ota-server/data/ota.db`)
-
----
+Express.js + SQLite. Behaviour identical for both platforms. Compares `created_at` of `currentLabel` against available releases to determine if a newer one exists.
 
 ### 3. OTA SDK — JS Layer (`packages/ota-sdk/src/`)
 
-Pure TypeScript, runs inside the React Native JS engine (Hermes).
+Shared TypeScript — runs on Hermes on both platforms.
 
 | File              | Role                                                                 |
 |-------------------|----------------------------------------------------------------------|
-| `OtaClient.ts`    | HTTP: check for update, download ZIP (arrayBuffer), verify hash, extract |
-| `OtaUpdater.tsx`  | React Context + `useOtaUpdate()` hook, AppState listener            |
-| `OtaStorage.ts`   | Read/write bundle paths via native module, derive labels from paths  |
-| `crashGuard.ts`   | Increment crash counter on start, rollback if threshold reached      |
-| `utils/fileUtils` | Helpers: getOtaDirectory, verifyHash, unzipBundle (via native)       |
+| `OtaClient.ts`    | HTTP: check update, download (`arrayBuffer`), verify hash, extract   |
+| `OtaUpdater.tsx`  | React Context + `useOtaUpdate()` hook, AppState foreground listener  |
+| `OtaStorage.ts`   | Read/write bundle paths via native bridge; derive labels from paths  |
+| `crashGuard.ts`   | Crash counter on every cold start; rollback at threshold             |
+| `utils/fileUtils` | Wrappers: `getOtaDirectory`, `verifyHash`, `unzipBundle`             |
 
----
+### 4. Native Layer — Android vs iOS
 
-### 4. Native Layer — Android (`android/app/.../ota/`)
-
-| File                  | Role                                                                          |
-|-----------------------|-------------------------------------------------------------------------------|
-| `OtaBundleManager.kt` | Singleton. Reads/writes bundle paths in SharedPreferences. Called before JS.  |
-| `OtaUpdateModule.kt`  | React Native native module. Exposes file ops (write, sha256, unzip, restart) to JS. |
-| `MainApplication.kt`  | On cold start: reads active bundle path → passes to `getDefaultReactHost()`   |
+| Aspect                  | Android (Kotlin)                                               | iOS (Swift)                                              |
+|-------------------------|----------------------------------------------------------------|----------------------------------------------------------|
+| Bundle manager          | `OtaBundleManager.kt` — `object` singleton                     | `OtaBundleManager.swift` — `@objc` class singleton       |
+| Persistent storage      | `SharedPreferences` (`ota_prefs`)                              | `UserDefaults.standard`                                  |
+| Keys                    | `ota_active_bundle_path`, `ota_pending_bundle_path`, `ota_previous_bundle_path`, `ota_crash_count` | Same keys |
+| Bundle selection point  | `MainApplication.kt` → `getDefaultReactHost(jsBundleFilePath:)` | `AppDelegate.swift` → `ReactNativeDelegate.bundleURL()`  |
+| Debug bundle            | Metro dev server (unchanged)                                   | `RCTBundleURLProvider.sharedSettings().jsBundleURL()`    |
+| Release fallback        | `jsBundleFilePath = null` → `assets://index.android.bundle`    | `Bundle.main.url(forResource: "main", withExtension: "jsbundle")` |
+| Native module           | `OtaUpdateModule.kt` extends `ReactContextBaseJavaModule`      | `OtaUpdateModule.swift` implements `RCTBridgeModule`     |
+| Restart mechanism       | `AlarmManager` relaunch + `Process.killProcess()`              | `RCTTriggerReloadCommandListeners` — in-process JS reload |
+| File write              | Base64 decode → `FileOutputStream`                             | Base64 decode → `Data.write(to:)`                        |
+| SHA-256                 | `MessageDigest("SHA-256")` — java.security                     | `CC_SHA256` — CommonCrypto                               |
+| Unzip                   | `ZipInputStream` — java.util.zip                               | `FileManager` + manual unzip                             |
 
 ---
 
@@ -120,23 +108,19 @@ Pure TypeScript, runs inside the React Native JS engine (Hermes).
 Developer changes JS code
         │
         ▼
-yarn ota:bundle --label v1.0.8 --platform android
+yarn ota:bundle --label v1.0.9 --platform android|ios
         │
-        ▼  (Metro bundler)
-index.android.bundle + assets
+        ▼  Metro bundler
+index.android.bundle / main.jsbundle + assets/
         │
-        ▼  (archived + hashed)
-ota-output/v1.0.8-android.zip  (SHA-256 computed)
+        ▼  archived + hashed
+ota-output/v1.0.9-android.zip  (SHA-256 computed)
         │
         ▼
-yarn ota:publish --label v1.0.8 --platform android
+yarn ota:publish --label v1.0.9 --platform android|ios
         │
         ▼  POST /v1/publish  (multipart, x-ota-secret)
-OTA Server
-        │
-        ▼
-ZIP saved to disk
-Metadata inserted into SQLite releases table
+OTA Server → ZIP saved to disk, metadata into SQLite
         │
         ▼
 { "success": true, "id": "<uuid>" }
@@ -146,58 +130,77 @@ Metadata inserted into SQLite releases table
 
 ### B. Cold Start — Bundle Selection
 
-This happens in Kotlin, before JS runs:
+#### Android (Kotlin — runs before JS)
 
 ```
 App process starts
         │
         ▼
 MainApplication.onCreate()
+  └─► OtaBundleManager.init(context)       ← SharedPreferences
         │
         ▼
-OtaBundleManager.init(context)       ← reads SharedPreferences
+MainApplication.reactHost (lazy init)
+  └─► OtaBundleManager.getActiveBundlePath()
+        │
+        ├── path exists? → getDefaultReactHost(jsBundleFilePath = path)
+        │                         React Native loads OTA bundle ✅
+        │
+        └── null/missing → getDefaultReactHost(jsBundleFilePath = null)
+                                  React Native loads APK asset ✅
+```
+
+#### iOS (Swift — runs before JS)
+
+```
+App launches
         │
         ▼
-OtaBundleManager.getActiveBundlePath()
+AppDelegate.application(_:didFinishLaunchingWithOptions:)
+  └─► RCTReactNativeFactory.startReactNative(...)
         │
-        ├── path exists on disk? ──YES──► jsBundleFilePath = "/data/.../ota/v1.0.8/index.android.bundle"
-        │                                          │
-        │                                          ▼
-        │                                  React Native loads OTA bundle
+        ▼
+ReactNativeDelegate.bundleURL()
         │
-        └── null / file missing? ──────► jsBundleFilePath = null
-                                                   │
-                                                   ▼
-                                          React Native loads APK asset
-                                          (assets://index.android.bundle)
+        ├── DEBUG  → RCTBundleURLProvider → Metro dev server URL
+        │
+        └── RELEASE
+              │
+              ▼
+        OtaBundleManager.shared.activeBundleURL
+              │
+              ├── URL on disk? → return otaURL  (.../ota/v1.0.9/main.jsbundle) ✅
+              │
+              └── nil/missing → Bundle.main.url(forResource: "main", withExtension: "jsbundle") ✅
 ```
 
 ---
 
 ### C. Crash Guard — Startup Safety
 
-Runs at the very top of `index.js`, before `AppRegistry.registerComponent`:
+Same JS logic on both platforms, runs in `index.js` before `AppRegistry.registerComponent`:
 
 ```
-JS starts executing
+JS starts
         │
         ▼
 initCrashGuard()
         │
         ▼
-OtaUpdateModule.incrementCrashCount()   ← native SharedPreferences
+incrementCrashCount()
+  Android → SharedPreferences  |  iOS → UserDefaults
         │
         ▼
-getCrashCount() >= threshold (3)?
+count >= threshold (3)?
         │
-        ├── YES ──► otaStorage.rollback()           ← restore previous bundle path
-        │           OtaUpdateModule.resetCrashCount()
-        │           OtaUpdateModule.restartApp()     ← AlarmManager restart
+        ├── YES → rollback() + resetCrashCount() + restartApp()
+        │           Android: AlarmManager → Process.killProcess()  (full cold restart)
+        │           iOS:     RCTTriggerReloadCommandListeners       (in-process JS reload)
         │
-        └── NO  ──► continue app startup
+        └── NO  → continue startup
 ```
 
-If the app renders successfully, `markSuccessfulLaunch()` is called from `AppContent`:
+On successful render, `markSuccessfulLaunch()` is called from `AppContent`:
 
 ```
 markSuccessfulLaunch()
@@ -205,12 +208,12 @@ markSuccessfulLaunch()
         ▼
 pendingBundlePath exists?
         │
-        ├── YES ──► otaStorage.activatePending()
-        │            ├── setActiveBundlePath(pendingPath)    ← native
-        │            ├── clearPendingBundle()                ← native
-        │            └── save old active as previousBundlePath (for rollback)
+        ├── YES → activatePending()
+        │          setActiveBundlePath(pendingPath)   ← SharedPreferences / UserDefaults
+        │          clearPendingBundle()
+        │          save old active → previousBundlePath (rollback target)
         │
-        └── NO  ──► skip
+        └── NO  → skip
         │
         ▼
 resetCrashCount()
@@ -220,45 +223,45 @@ resetCrashCount()
 
 ### D. Checking and Downloading an Update
 
-Triggered automatically on app mount by `OtaProvider` (and on app foreground via AppState):
+Same JS code on both platforms:
 
 ```
 OtaProvider mounts
         │
         ▼
-checkForUpdate()
+GET /v1/check-update?appVersion=1.0.0&currentLabel=v1.0.9&platform=android|ios&channel=production
         │
-        ▼  GET /v1/check-update?appVersion=1.0.0&currentLabel=v1.0.7&platform=android&channel=production
-OTA Server
+        ▼  SQL: WHERE created_at > (SELECT created_at FROM releases WHERE label = @currentLabel)
         │
-        ▼  SQL: SELECT * FROM releases WHERE created_at > (SELECT created_at FROM releases WHERE label = 'v1.0.7')
+        ├── no newer release → { hasUpdate: false } → status = UP_TO_DATE
         │
-        ├── No newer release ──► { hasUpdate: false }  ──► status = UP_TO_DATE
-        │
-        └── Newer release ──────► { hasUpdate: true, release: { label, downloadUrl, hash, ... } }
-                │
-                ▼  status = UPDATE_AVAILABLE
-                │
-          strategy = BACKGROUND or IMMEDIATE?
+        └── newer release → { hasUpdate: true, release: { label, downloadUrl, hash, ... } }
                 │
                 ▼  status = DOWNLOADING
                 │
-          fetch(downloadUrl)  [arrayBuffer — Hermes compatible]
+          fetch(downloadUrl) → resp.arrayBuffer()   ← works on Hermes (Android + iOS)
                 │
                 ▼
-          Write base64 ZIP to disk via OtaUpdateModule.writeBase64File()
+          uint8Array → base64
                 │
                 ▼
-          Verify SHA-256 via OtaUpdateModule.sha256File()
+          OtaUpdateModule.writeBase64File(zipPath, base64)
+            Android: FileOutputStream              iOS: Data.write(to:)
                 │
                 ▼
-          Unzip via OtaUpdateModule.unzipFile()
+          OtaUpdateModule.sha256File(zipPath)
+            Android: MessageDigest("SHA-256")      iOS: CC_SHA256 (CommonCrypto)
                 │
                 ▼
-          OtaStorage.setPending(label, bundlePath)  ──► OtaUpdateModule.setPendingBundle(path)
+          OtaUpdateModule.unzipFile(zipPath, destDir)
+            Android: ZipInputStream                iOS: FileManager + manual unzip
                 │
-                ▼  status = READY_TO_INSTALL (BACKGROUND)
-                   or restart immediately (IMMEDIATE)
+                ▼
+          OtaStorage.setPending(label, bundlePath)
+            Android: SharedPreferences             iOS: UserDefaults
+                │
+                ▼
+          status = READY_TO_INSTALL (BACKGROUND) / auto-restart (IMMEDIATE)
 ```
 
 ---
@@ -266,110 +269,115 @@ OTA Server
 ### E. Applying the Update
 
 ```
-BACKGROUND strategy:
-        User sees "Restart to apply" banner
-                │
-                ▼ (user taps Restart, or next cold start)
-        App restarts  [AlarmManager schedules restart]
+BACKGROUND:
+  User taps "Restart" banner (or next cold start)
+        │
+        ▼
+  OtaUpdateModule.restartApp()
+    Android → AlarmManager relaunch in 300ms → Process.killProcess()
+              → MainApplication re-runs → reads new active bundle path
+    iOS     → RCTTriggerReloadCommandListeners
+              → bundleURL() returns new OTA URL → JS reloads in-process
 
-IMMEDIATE strategy:
-        Auto-restart triggered immediately after download
+IMMEDIATE:
+  Auto-restart triggered right after download completes
 ```
-
-On next cold start, `MainApplication` reads the **pending** → now **active** bundle path and loads it. Then `markSuccessfulLaunch()` promotes it from pending to active in SharedPreferences.
 
 ---
 
 ### F. Rollback Flow
 
 ```
-Bundle crashes 3 times in a row (incrementCrashCount threshold)
+Bundle crashes × crashThreshold (default 3)
         │
         ▼
 otaStorage.rollback()
-        │
-        ├── previousBundlePath exists ──► setActiveBundlePath(previousPath)
-        │
-        └── no previous ──────────────► clearActiveBundlePath()  (fall back to APK asset)
+  previousBundlePath? → setActiveBundlePath(previousPath)
+  none?               → clearActiveBundlePath()  (fall back to shipped asset)
         │
         ▼
-resetCrashCount()
-        │
-        ▼
-restartApp()  ──► loads previous bundle or APK asset
+resetCrashCount() → restartApp()
+  Android: full cold restart via AlarmManager
+  iOS:     in-process JS reload via RCTTriggerReloadCommandListeners
 ```
 
 ---
 
-## State Machine — OTA Status
+## OTA Status State Machine
 
 ```
-                     ┌──────────┐
-                     │   IDLE   │
-                     └────┬─────┘
-                          │ checkForUpdate()
+          ┌──────────┐
+          │   IDLE   │
+          └────┬─────┘
+               │ checkForUpdate()
+               ▼
+          ┌──────────┐
+          │ CHECKING │
+          └────┬─────┘
+     ┌─────────┴──────────┐
+     │ no update          │ update found
+     ▼                    ▼
+┌───────────┐    ┌──────────────────┐
+│ UP_TO_DATE│    │ UPDATE_AVAILABLE │ (auto-download for BACKGROUND/IMMEDIATE)
+└───────────┘    └────────┬─────────┘
+                          │
                           ▼
-                     ┌──────────┐
-                     │ CHECKING │
-                     └────┬─────┘
-              ┌───────────┴──────────┐
-              │ hasUpdate: false     │ hasUpdate: true
-              ▼                      ▼
-        ┌───────────┐      ┌──────────────────┐
-        │ UP_TO_DATE│      │ UPDATE_AVAILABLE  │
-        └───────────┘      └────────┬─────────┘
-                                    │ auto-download (BACKGROUND/IMMEDIATE)
-                                    ▼
-                           ┌──────────────┐
-                           │ DOWNLOADING  │ ── progress: 0→100%
-                           └──────┬───────┘
-                     ┌────────────┴─────────────┐
-                     │ success                  │ error
-                     ▼                           ▼
-            ┌─────────────────┐           ┌───────────┐
-            │ READY_TO_INSTALL│           │   ERROR   │
-            └────────┬────────┘           └───────────┘
-                     │ applyNow() / restart
-                     ▼
-              ┌────────────┐
-              │ INSTALLING │
-              └────────────┘
-                     │ crash × threshold
-                     ▼
-              ┌─────────────┐
-              │ ROLLED_BACK │
-              └─────────────┘
+                 ┌──────────────┐
+                 │ DOWNLOADING  │  progress 0→100%
+                 └──────┬───────┘
+              ┌─────────┴─────────┐
+              │ success           │ error
+              ▼                   ▼
+     ┌─────────────────┐    ┌───────────┐
+     │ READY_TO_INSTALL│    │   ERROR   │ (auto-hides 5s)
+     └────────┬────────┘    └───────────┘
+              │ applyNow() / restart
+              ▼
+       ┌────────────┐
+       │ INSTALLING │
+       └─────┬──────┘
+             │ crash × threshold
+             ▼
+       ┌─────────────┐
+       │ ROLLED_BACK │ (auto-hides 5s)
+       └─────────────┘
 ```
 
 ---
 
 ## Storage Layers
 
-| What                   | Where                     | Access                   |
-|------------------------|---------------------------|--------------------------|
-| Active bundle path     | Android SharedPreferences | `OtaBundleManager` (Kotlin) + `OtaUpdateModule` (native bridge) |
-| Pending bundle path    | Android SharedPreferences | Same                     |
-| Previous bundle path   | Android SharedPreferences | Same (rollback target)   |
-| Crash count            | Android SharedPreferences | Same                     |
-| Release metadata       | SQLite (`ota.db`)         | OTA Server only          |
-| Bundle ZIPs            | Local filesystem          | Server disk / device disk |
-| In-session label cache | JS memory (`OtaStorage`)  | Derived from path on load |
+| What                  | Android                           | iOS                              | Access layer                              |
+|-----------------------|-----------------------------------|----------------------------------|-------------------------------------------|
+| Active bundle path    | SharedPreferences                 | UserDefaults                     | `OtaBundleManager` (native) + bridge      |
+| Pending bundle path   | SharedPreferences                 | UserDefaults                     | Same                                      |
+| Previous bundle path  | SharedPreferences                 | UserDefaults                     | Same (rollback target)                    |
+| Crash count           | SharedPreferences                 | UserDefaults                     | Same                                      |
+| Release metadata      | SQLite `ota.db` (server)          | SQLite `ota.db` (server)         | OTA Server only                           |
+| Bundle ZIPs (server)  | `packages/ota-server/data/`       | Same                             | Server disk                               |
+| Bundle ZIPs (device)  | `/data/user/0/<pkg>/files/ota/<label>/` | `<Documents>/ota/<label>/` | OtaUpdateModule native bridge             |
+| In-session label      | JS memory                         | JS memory                        | Derived from path in `OtaStorage.load()`  |
 
 ---
 
 ## Key Design Decisions
 
-### Why SharedPreferences for bundle paths?
-The native `MainApplication` must know which bundle to load **before JS executes**. SharedPreferences is the only storage readable in Kotlin before the JS engine starts.
+### Why SharedPreferences (Android) / UserDefaults (iOS)?
+The native entry point must know which bundle to load **before JS executes**. These are the only storage APIs readable before the JS engine starts.
 
 ### Why `arrayBuffer()` instead of streaming?
-React Native's Hermes engine does not implement the `ReadableStream` / `getReader()` API on `Response.body`. `response.arrayBuffer()` is fully supported and collects the full payload in memory before writing to disk.
+Hermes does not implement `ReadableStream` / `getReader()` on `Response.body`. `response.arrayBuffer()` is fully supported on both Android and iOS Hermes.
 
 ### Why derive labels from paths?
-Labels are not stored in SharedPreferences — only file paths are (to keep the native layer minimal). The JS layer derives the label from the directory name in the path (`.../ota/<label>/index.android.bundle`), avoiding any native schema changes.
+Labels are not stored natively — only file paths are. The JS layer derives the label from the directory name in the path (`.../ota/<label>/main.jsbundle`), keeping the native layer minimal and schema-free.
 
 ### Why `created_at` comparison instead of `label !=`?
-Label strings are not reliably sortable (e.g., "v1.0.10" < "v1.0.9" lexicographically). Using `created_at` timestamp of the current label as the comparison baseline ensures the device always gets the newest release published **after** its current one.
+Label strings are not reliably sortable (e.g. "v1.0.10" < "v1.0.9" lexicographically). `created_at` timestamp comparison ensures a device always receives only releases published **after** its current one.
 
-### Why AlarmManager for restart?
-`ActivityManager.recreate()` only restarts the JS layer. A full cold-start restart (which re-executes `MainApplication` and re-selects the bundle path) requires killing and relaunching the process. AlarmManager schedules a delayed relaunch after `Process.killProcess()`.
+### Why AlarmManager on Android but `RCTTriggerReloadCommandListeners` on iOS?
+Android requires a full process kill + relaunch so `MainApplication` re-runs and re-selects `jsBundleFilePath`. `AlarmManager` schedules a relaunch 300ms after `Process.killProcess()`.
+
+iOS App Store guidelines prohibit `exit(0)`. Instead, `RCTTriggerReloadCommandListeners` triggers an in-process JS bundle reload — `bundleURL()` is called again, returning the new OTA URL. No process kill required.
+
+### Why is the JS SDK shared across platforms?
+`OtaClient`, `OtaStorage`, `OtaUpdater`, and `crashGuard` are pure TypeScript with zero platform-specific code. All platform differences (file write, hash, unzip, restart, storage) are abstracted behind `OtaUpdateModule`, which exposes identical method names and Promise-based signatures on both Kotlin and Swift.
