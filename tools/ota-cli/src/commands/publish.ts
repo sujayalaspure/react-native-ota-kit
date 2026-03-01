@@ -40,13 +40,15 @@ export const publishCommand = new Command('publish')
   .description('Upload an OTA bundle to the update server')
   .requiredOption('-l, --label <label>', 'Release label (must match what was built)')
   .option('-p, --platform <platform>', 'android | ios | both', 'both')
-  .option('-c, --config <path>', 'Path to ota.config.json', './ota.config.json')
-  .option('-o, --out <dir>', 'Build output directory (must match ota bundle --out)', './ota-output')
+  .option('-c, --config <path>', 'Path to ota.config.json', path.resolve(__dirname, '..', '..', '..', '..', 'ota.config.json'))
+  .option('-o, --out <dir>', 'Build output directory (must match ota bundle --out, relative to RN root)', 'ota-output')
+  .option('--root <dir>', 'Path to React Native project root', path.resolve(__dirname, '..', '..', '..', '..'))
   .option('--mandatory', 'Mark this release as mandatory', false)
   .action(async (opts) => {
-    const { label, platform, config: configPath, out: outDir, mandatory } = opts;
+    const { label, platform, config: configPath, out: outDirRel, root: rnRoot, mandatory } = opts;
     const platforms: Array<'android' | 'ios'> =
       platform === 'both' ? ['android', 'ios'] : [platform as 'android' | 'ios'];
+    const outDir = path.resolve(rnRoot, outDirRel);
 
     // ── Load config ──────────────────────────────────────────────────────────
     const absConfig = path.resolve(configPath);

@@ -61,13 +61,18 @@ db.exec(`
 
 export const queries = {
   /** Find the latest active release for a given channel + platform that
-   *  supports the caller's appVersion and is newer than currentLabel. */
+   *  supports the caller's appVersion and is newer than currentLabel.
+   *  We compare created_at so that a device on v1.0.7 does NOT get offered
+   *  v1.0.6 (which was published before v1.0.7). */
   findLatestRelease: db.prepare(`
     SELECT * FROM releases
     WHERE channel   = @channel
       AND (platform = @platform OR platform = 'both')
       AND active    = 1
-      AND label     != @currentLabel
+      AND created_at > COALESCE(
+            (SELECT created_at FROM releases WHERE label = @currentLabel),
+            '1970-01-01'
+          )
     ORDER BY created_at DESC
     LIMIT 1
   `),

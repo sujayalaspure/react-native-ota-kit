@@ -39,6 +39,8 @@ export class OtaClient {
     const platform = Platform.OS as 'android' | 'ios';
     const currentLabel = record.activeLabel ?? '';
 
+    console.log(`[OTA] Checking for update — channel: ${this.config.channel}, platform: ${platform}, appVersion: ${this.config.appVersion}, currentLabel: "${currentLabel}"`);
+
     const url = new URL(`${this.config.serverUrl}/v1/check-update`);
     url.searchParams.set('appVersion', this.config.appVersion);
     url.searchParams.set('currentLabel', currentLabel);
@@ -61,6 +63,13 @@ export class OtaClient {
 
     const data = (await resp.json()) as CheckUpdateResponse;
     otaStorage.setLastChecked(new Date().toISOString());
+
+    if (data.hasUpdate) {
+      console.log(`[OTA] Update available — label: ${data.release.label}, size: ${(data.release.size / 1024).toFixed(1)} KB, mandatory: ${data.release.mandatory}`);
+    } else {
+      console.log('[OTA] Already up-to-date.');
+    }
+
     return data;
   }
 
@@ -79,56 +88,52 @@ export class OtaClient {
     const otaDir = await getOtaDirectory(release.label);
     const zipPath = `${otaDir}/update.zip`;
 
+    console.log(`[OTA] Starting download — label: ${release.label}, url: ${release.downloadUrl}`);
+
     // ── Stream download ────────────────────────────────────────────────────
     const resp = await fetch(release.downloadUrl, {
       headers: this.config.headers,
     });
 
-    if (!resp.ok || !resp.body) {
+    if (!resp.ok) {
       throw new Error(
         `[OtaClient] download failed: HTTP ${resp.status}`,
       );
     }
 
-    const contentLength = Number(
-      resp.headers.get('content-length') ?? release.size,
-    );
-    let bytesWritten = 0;
+    // React Native / Hermes does not expose resp.body as a ReadableStream,
+    // so we use arrayBuffer() to receive the full payload in one shot.
+    if (onProgress) onProgress({ bytesWritten: 0, contentLength: release.size, percent: 0 });
 
-    // Collect chunks — RNFS write would be used in full native impl,
-    // here we collect then write via the native module helper.
-    const chunks: Uint8Array[] = [];
-    const reader = resp.body.getReader();
+    console.log(`[OTA] Fetching body via arrayBuffer…`);
+    const buffer = await resp.arrayBuffer();
+    const uint8 = new Uint8Array(buffer);
+    const bytesWritten = uint8.length;
+    const contentLength = bytesWritten;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      bytesWritten += value.length;
-      if (onProgress) {
-        onProgress({
-          bytesWritten,
-          contentLength,
-          percent: Math.round((bytesWritten / contentLength) * 100),
-        });
-      }
-    }
+    console.log(`[OTA] Download complete — ${(bytesWritten / 1024).toFixed(1)} KB received`);
+    if (onProgress) onProgress({ bytesWritten, contentLength, percent: 100 });
 
     // Write zip to disk via our native write helper
-    const base64 = uint8ArraysToBase64(chunks);
+    const base64 = uint8ArraysToBase64([uint8]);
     await writeBase64ToFile(zipPath, base64);
 
     // ── Verify hash ────────────────────────────────────────────────────────
+    console.log(`[OTA] Verifying SHA-256 hash — expected: ${release.hash}`);
     const valid = await verifyHash(zipPath, release.hash);
     if (!valid) {
+      console.error(`[OTA] Hash mismatch for release ${release.label}! File may be corrupted.`);
       throw new Error(
         `[OtaClient] hash mismatch for release ${release.label}. ` +
         `Expected ${release.hash}. File may be corrupted.`,
       );
     }
+    console.log(`[OTA] Hash verified OK.`);
 
     // ── Extract ZIP ────────────────────────────────────────────────────────
+    console.log(`[OTA] Extracting ZIP to: ${otaDir}`);
     const bundlePath = await unzipBundle(zipPath, otaDir, Platform.OS as 'android' | 'ios');
+    console.log(`[OTA] Bundle extracted — path: ${bundlePath}`);
 
     return bundlePath;
   }
@@ -141,10 +146,14 @@ export class OtaClient {
    * For BACKGROUND / ON_RESUME, update activates on next cold start.
    */
   async applyUpdate(release: OtaRelease, bundlePath: string): Promise<void> {
-    await otaStorage.setPending(release.label, bundlePath);
+    console.log(`[OTA] Marking bundle as pending — label: ${release.label}, path: ${bundlePath}`);
+    await otaStorage.setPending(release.label, bundlePath, release.id);
 
     if (this.config.strategy === 'IMMEDIATE') {
+      console.log('[OTA] Strategy is IMMEDIATE — restarting app now.');
       await this.restart();
+    } else {
+      console.log(`[OTA] Strategy is ${this.config.strategy} — update will apply on next cold start.`);
     }
   }
 
@@ -155,6 +164,8 @@ export class OtaClient {
   ): Promise<void> {
     const bundlePath = await this.downloadRelease(release, onProgress);
     await this.applyUpdate(release, bundlePath);
+    // Report after staging — fire-and-forget; errors are caught inside reportInstall
+    this.reportInstall(release.id, 'installed').catch(() => {});
   }
 
   // ─── Rollback ─────────────────────────────────────────────────────────────
@@ -164,8 +175,43 @@ export class OtaClient {
    * Clears both active and pending, then restarts.
    */
   async rollback(): Promise<void> {
+    console.log('[OTA] Rolling back to previous bundle.');
+    const releaseId = otaStorage.activeReleaseId;
+    if (releaseId) {
+      await this.reportInstall(releaseId, 'rollback').catch(() => {});
+    }
     await otaStorage.rollback();
     await this.restart();
+  }
+
+  // ─── Report ───────────────────────────────────────────────────────────────
+
+  /**
+   * Reports install status back to the server.
+   * status: 'installed' | 'rollback' | 'failed'
+   * Fire-and-forget safe — errors are logged but never thrown.
+   */
+  async reportInstall(
+    releaseId: string,
+    status: 'installed' | 'rollback' | 'failed',
+  ): Promise<void> {
+    try {
+      const platform = Platform.OS as 'android' | 'ios';
+      console.log(`[OTA] Reporting install — releaseId: ${releaseId}, status: ${status}`);
+      await fetch(`${this.config.serverUrl}/v1/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...this.config.headers },
+        body: JSON.stringify({
+          releaseId,
+          status,
+          platform,
+          appVersion: this.config.appVersion,
+        }),
+      });
+      console.log(`[OTA] Report sent — ${status}`);
+    } catch (err: any) {
+      console.warn(`[OTA] Failed to send install report: ${err?.message}`);
+    }
   }
 
   // ─── Restart ──────────────────────────────────────────────────────────────

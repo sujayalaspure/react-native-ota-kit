@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Base64
+import android.util.Log
 import com.facebook.react.bridge.*
 import java.io.*
 import java.security.MessageDigest
@@ -21,6 +22,8 @@ import java.util.zip.ZipInputStream
  */
 class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
+
+    private val TAG = "OTA"
 
     override fun getName() = "OtaUpdateModule"
 
@@ -100,6 +103,7 @@ class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun restartApp(promise: Promise) {
         try {
+            Log.d(TAG, "Restarting app to load new bundle.")
             val ctx = reactContext.applicationContext
             val packageManager = ctx.packageManager
             val intent = packageManager.getLaunchIntentForPackage(ctx.packageName)!!.apply {
@@ -147,8 +151,10 @@ class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
                 val file = File(path)
                 file.parentFile?.mkdirs()
                 FileOutputStream(file).use { it.write(bytes) }
+                Log.d(TAG, "writeBase64File — wrote ${bytes.size} bytes to $path")
                 promise.resolve(null)
             } catch (e: Exception) {
+                Log.e(TAG, "writeBase64File error: ${e.message}")
                 promise.reject("WRITE_ERROR", e.message, e)
             }
         }.start()
@@ -159,6 +165,7 @@ class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
     fun sha256File(path: String, promise: Promise) {
         Thread {
             try {
+                Log.d(TAG, "sha256File — hashing: $path")
                 val digest = MessageDigest.getInstance("SHA-256")
                 FileInputStream(path).use { fis ->
                     val buffer = ByteArray(8192)
@@ -169,8 +176,10 @@ class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
                     }
                 }
                 val hex = digest.digest().joinToString("") { "%02x".format(it) }
+                Log.d(TAG, "sha256File — result: $hex")
                 promise.resolve(hex)
             } catch (e: Exception) {
+                Log.e(TAG, "sha256File error: ${e.message}")
                 promise.reject("HASH_ERROR", e.message, e)
             }
         }.start()
@@ -184,9 +193,11 @@ class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
     fun unzipFile(zipPath: String, destDir: String, promise: Promise) {
         Thread {
             try {
+                Log.d(TAG, "unzipFile — extracting $zipPath → $destDir")
                 val dest = File(destDir)
                 dest.mkdirs()
                 val destCanonical = dest.canonicalPath
+                var count = 0
 
                 ZipInputStream(FileInputStream(zipPath)).use { zis ->
                     var entry = zis.nextEntry
@@ -208,13 +219,16 @@ class OtaUpdateModule(private val reactContext: ReactApplicationContext) :
                                     len = zis.read(buffer)
                                 }
                             }
+                            count++
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
                     }
                 }
+                Log.d(TAG, "unzipFile — extracted $count files to $destDir")
                 promise.resolve(null)
             } catch (e: Exception) {
+                Log.e(TAG, "unzipFile error: ${e.message}")
                 promise.reject("UNZIP_ERROR", e.message, e)
             }
         }.start()

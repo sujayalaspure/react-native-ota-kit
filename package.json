@@ -12,10 +12,10 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
-    "ota:server": "yarn workspace ota-server start",
-    "ota:server:dev": "yarn workspace ota-server dev",
+    "ota:server": "node start-ota-server.js",
+    "ota:server:dev": "node start-ota-server.js",
     "ota:bundle": "yarn workspace ota-cli bundle",
-    "ota:publish": "yarn workspace ota-cli publish"
+    "ota:publish": "yarn workspace ota-cli release"
   },
   "dependencies": {
     "react": "19.2.3",

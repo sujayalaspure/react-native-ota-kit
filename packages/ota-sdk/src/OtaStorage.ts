@@ -26,6 +26,9 @@ const DEFAULT_RECORD: OtaInstallRecord = {
 
 class OtaStorage {
   private cache: OtaInstallRecord | null = null;
+  // In-memory only — survives within a session, used for rollback reporting
+  private _pendingReleaseId: string | null = null;
+  private _activeReleaseId: string | null = null;
 
   /** Load current state from native storage (called once per session) */
   async load(): Promise<OtaInstallRecord> {
@@ -37,11 +40,24 @@ class OtaStorage {
       OtaNativeModule.getPreviousBundlePath(),
     ]);
 
+    // Labels are not stored natively — derive them from the path.
+    // Path structure: .../ota/<label>/index.android.bundle
+    // so the parent directory name is the label.
+    const labelFromPath = (path: string | null): string | null => {
+      if (!path) return null;
+      const parts = path.replace(/\\/g, '/').split('/');
+      // bundle file is the last segment; label dir is second-to-last
+      return parts.length >= 2 ? parts[parts.length - 2] : null;
+    };
+
     this.cache = {
       ...DEFAULT_RECORD,
       activeBundlePath: active,
+      activeLabel: labelFromPath(active),
       pendingBundlePath: pending,
+      pendingLabel: labelFromPath(pending),
       previousBundlePath: previous,
+      previousLabel: labelFromPath(previous),
       lastChecked: null,
     };
 
@@ -54,11 +70,12 @@ class OtaStorage {
   }
 
   /** Mark a bundle as pending (downloaded, awaiting restart) */
-  async setPending(label: string, bundlePath: string): Promise<void> {
+  async setPending(label: string, bundlePath: string, releaseId?: string): Promise<void> {
     await OtaNativeModule.setPendingBundle(bundlePath);
     const rec = await this.load();
     rec.pendingLabel = label;
     rec.pendingBundlePath = bundlePath;
+    if (releaseId) this._pendingReleaseId = releaseId;
   }
 
   /** Promote the pending bundle to active (called after first successful boot) */
@@ -78,6 +95,10 @@ class OtaStorage {
     rec.activeLabel = rec.pendingLabel;
     rec.pendingBundlePath = null;
     rec.pendingLabel = null;
+
+    // Promote releaseId
+    this._activeReleaseId = this._pendingReleaseId;
+    this._pendingReleaseId = null;
   }
 
   /** Rollback to previous bundle */
@@ -110,6 +131,9 @@ class OtaStorage {
     ]);
     this.cache = { ...DEFAULT_RECORD };
   }
+
+  get activeReleaseId(): string | null { return this._activeReleaseId; }
+  get pendingReleaseId(): string | null { return this._pendingReleaseId; }
 
   setLastChecked(iso: string): void {
     if (this.cache) this.cache.lastChecked = iso;

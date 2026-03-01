@@ -35,11 +35,11 @@ export async function initCrashGuard(threshold = 3): Promise<void> {
   try {
     await OtaNativeModule.incrementCrashCount();
     const count = await OtaNativeModule.getCrashCount();
+    console.log(`[OTA] CrashGuard — cold start #${count} (threshold: ${threshold})`);
 
     if (count >= threshold) {
       console.warn(
-        `[OtaCrashGuard] Crash count ${count} reached threshold ${threshold}. ` +
-          'Rolling back to previous bundle and restarting.',
+        `[OTA] CrashGuard — crash count ${count} reached threshold ${threshold}. Rolling back and restarting.`,
       );
       await otaStorage.rollback();
       await OtaNativeModule.resetCrashCount();
@@ -48,7 +48,7 @@ export async function initCrashGuard(threshold = 3): Promise<void> {
   } catch (err) {
     // If the crash guard itself errors, swallow and continue —
     // better to let the app try to run than block startup.
-    console.error('[OtaCrashGuard] init error:', err);
+    console.error('[OTA] CrashGuard init error:', err);
   }
 }
 
@@ -62,11 +62,16 @@ export async function markSuccessfulLaunch(): Promise<void> {
 
     // If there's a pending bundle that just became active, persist it
     if (record.pendingBundlePath) {
+      console.log(`[OTA] Activating pending bundle: ${record.pendingBundlePath}`);
       await otaStorage.activatePending();
+      console.log('[OTA] Pending bundle is now active.');
+    } else {
+      console.log('[OTA] Successful launch — no pending bundle.');
     }
 
     await OtaNativeModule.resetCrashCount();
+    console.log('[OTA] Crash counter reset.');
   } catch (err) {
-    console.error('[OtaCrashGuard] markSuccessfulLaunch error:', err);
+    console.error('[OTA] markSuccessfulLaunch error:', err);
   }
 }

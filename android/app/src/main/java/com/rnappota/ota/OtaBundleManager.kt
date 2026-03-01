@@ -2,6 +2,7 @@ package com.rnappota.ota
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import java.io.File
 
 /**
@@ -19,6 +20,7 @@ import java.io.File
  */
 object OtaBundleManager {
 
+    private const val TAG = "OTA"
     private const val PREFS_NAME = "ota_prefs"
     private const val KEY_ACTIVE = "ota_active_bundle_path"
     private const val KEY_PENDING = "ota_pending_bundle_path"
@@ -39,11 +41,16 @@ object OtaBundleManager {
      * Also validates the file exists; clears the path and returns null if not.
      */
     fun getActiveBundlePath(): String? {
-        val path = prefs.getString(KEY_ACTIVE, null) ?: return null
+        val path = prefs.getString(KEY_ACTIVE, null) ?: run {
+            Log.d(TAG, "No active OTA bundle — loading from APK asset.")
+            return null
+        }
         if (!File(path).exists()) {
+            Log.w(TAG, "Active bundle path set but file missing: $path — clearing, falling back to APK asset.")
             clearActiveBundlePath()
             return null
         }
+        Log.d(TAG, "Active OTA bundle: $path")
         return path
     }
 
@@ -85,7 +92,9 @@ object OtaBundleManager {
 
     fun incrementCrashCount() {
         val count = getCrashCount()
-        prefs.edit().putInt(KEY_CRASH_COUNT, count + 1).apply()
+        val next = count + 1
+        prefs.edit().putInt(KEY_CRASH_COUNT, next).apply()
+        Log.d(TAG, "Crash count incremented: $count → $next")
     }
 
     fun resetCrashCount() {
@@ -101,8 +110,10 @@ object OtaBundleManager {
     fun rollback() {
         val previous = getPreviousBundlePath()
         if (previous != null && File(previous).exists()) {
+            Log.d(TAG, "Rollback — restoring previous bundle: $previous")
             setActiveBundlePath(previous)
         } else {
+            Log.w(TAG, "Rollback — no valid previous bundle found, falling back to APK asset.")
             clearActiveBundlePath()           // fall back to APK asset
         }
         clearPendingBundlePath()

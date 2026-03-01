@@ -83,6 +83,7 @@ export function OtaProvider({
     const client = clientRef.current;
     setStatus('CHECKING');
     setError(null);
+    console.log('[OTA] Status → CHECKING');
 
     try {
       const result = await client.checkForUpdate();
@@ -90,23 +91,27 @@ export function OtaProvider({
       if (result.hasUpdate) {
         setAvailableRelease(result.release);
         setStatus('UPDATE_AVAILABLE');
+        console.log(`[OTA] Status → UPDATE_AVAILABLE (${result.release.label})`);
 
         // Auto-download for BACKGROUND and IMMEDIATE strategies
         if (
           config.strategy === 'BACKGROUND' ||
           config.strategy === 'IMMEDIATE'
         ) {
+          console.log(`[OTA] Auto-downloading for strategy: ${config.strategy}`);
           await _download(result.release);
         }
       } else {
         setStatus('UP_TO_DATE');
         setAvailableRelease(null);
+        console.log('[OTA] Status → UP_TO_DATE');
       }
 
       return result;
     } catch (err: any) {
       setStatus('ERROR');
       setError(err?.message ?? 'Unknown error during update check');
+      console.error('[OTA] Status → ERROR during checkForUpdate:', err?.message);
       return null;
     }
   }, [config.strategy]);
@@ -115,6 +120,7 @@ export function OtaProvider({
     const client = clientRef.current;
     setStatus('DOWNLOADING');
     setProgress(0);
+    console.log(`[OTA] Status → DOWNLOADING (${release.label})`);
 
     try {
       await client.downloadAndApply(release, (p: DownloadProgress) => {
@@ -123,12 +129,15 @@ export function OtaProvider({
 
       if (config.strategy === 'IMMEDIATE') {
         setStatus('INSTALLING');
+        console.log('[OTA] Status → INSTALLING (app will restart now)');
       } else {
         setStatus('READY_TO_INSTALL');
+        console.log('[OTA] Status → READY_TO_INSTALL (will apply on next cold start)');
       }
     } catch (err: any) {
       setStatus('ERROR');
       setError(err?.message ?? 'Download failed');
+      console.error('[OTA] Status → ERROR during download:', err?.message);
     }
   }, [config.strategy]);
 
@@ -140,8 +149,10 @@ export function OtaProvider({
   }, [availableRelease, _download]);
 
   const rollback = useCallback(async () => {
+    console.log('[OTA] Manual rollback triggered.');
     await clientRef.current.rollback();
     setStatus('ROLLED_BACK');
+    console.log('[OTA] Status → ROLLED_BACK');
   }, []);
 
   // ── AppState listener for ON_RESUME strategy ──────────────────────────────
