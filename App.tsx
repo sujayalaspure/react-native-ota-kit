@@ -24,7 +24,7 @@ import { OtaProvider, markSuccessfulLaunch, useOtaUpdate } from './packages/ota-
 
 /** OTA server config — update serverUrl with your actual host in production */
 const OTA_CONFIG = {
-  serverUrl: 'http://192.168.1.3:3000', // LAN IP — phone and laptop must be on the same Wi-Fi
+  serverUrl: 'https://react-native-ota-kit.onrender.com',
   channel: 'production',
   appVersion: '1.0.0',
   strategy: 'BACKGROUND' as const,
