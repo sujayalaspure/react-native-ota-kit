@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ota-server
+    env: node
+    rootDir: packages/ota-server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: STORAGE_BACKEND
+        value: supabase
+      # Set these in the Render dashboard (Secrets):
+      - key: DATABASE_URL
+        sync: false
+      - key: OTA_SECRET
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OTA_BUCKET_NAME
+        value: ota-bundles

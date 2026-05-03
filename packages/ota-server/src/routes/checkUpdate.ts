@@ -20,18 +20,14 @@ import type { StorageBackend } from '../storage';
 export function checkUpdateRouter(storage: StorageBackend): Router {
   const router = Router();
 
-  router.get('/', (req: Request, res: Response) => {
+  router.get('/', async (req: Request, res: Response) => {
     const { appVersion, currentLabel = '', platform, channel = 'production' } = req.query as Record<string, string>;
 
     if (!appVersion || !platform) {
       return res.status(400).json({ error: 'appVersion and platform are required' });
     }
 
-    const release = queries.findLatestRelease.get({
-      channel,
-      platform,
-      currentLabel,
-    }) as any;
+    const release = await queries.findLatestRelease({ channel, platform, currentLabel });
 
     if (!release) {
       return res.json({ hasUpdate: false });

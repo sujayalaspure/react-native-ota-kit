@@ -84,3 +84,7 @@ ota-output/
 # TypeScript build outputs
 packages/*/dist/
 tools/*/dist/
+
+# Environment files
+.env
+*.env

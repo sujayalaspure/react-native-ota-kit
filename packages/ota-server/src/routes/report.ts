@@ -9,7 +9,7 @@
 
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import { queries, db } from '../db';
+import { queries } from '../db';
 
 // Auto-deactivate a release if rollback rate exceeds this threshold
 const AUTO_DEACTIVATE_THRESHOLD = 0.3; // 30%
@@ -17,7 +17,7 @@ const AUTO_DEACTIVATE_THRESHOLD = 0.3; // 30%
 export function reportRouter(): Router {
   const router = Router();
 
-  router.post('/', (req: Request, res: Response) => {
+  router.post('/', async (req: Request, res: Response) => {
     const { releaseId, status, platform, appVersion, deviceId } = req.body;
 
     if (!releaseId || !status || !platform) {
@@ -29,13 +29,13 @@ export function reportRouter(): Router {
       return res.status(400).json({ error: `status must be one of: ${validStatuses.join(', ')}` });
     }
 
-    const release = queries.getReleaseById.get({ id: releaseId }) as any;
+    const release = await queries.getReleaseById(releaseId);
     if (!release) {
       return res.status(404).json({ error: 'Release not found' });
     }
 
     // Insert report
-    queries.insertReport.run({
+    await queries.insertReport({
       id: randomUUID(),
       release_id: releaseId,
       device_id: deviceId ?? null,
@@ -45,13 +45,11 @@ export function reportRouter(): Router {
     });
 
     // Recompute rollback rate and potentially auto-deactivate
-    const rateRow = queries.getRollbackRate.get({ release_id: releaseId }) as any;
-    const rate: number = rateRow?.rate ?? 0;
+    const rate = await queries.getRollbackRate(releaseId);
+    await queries.updateRollbackRate(releaseId, rate);
 
-    queries.updateRollbackRate.run({ rate, id: releaseId });
-
-    if (rate >= AUTO_DEACTIVATE_THRESHOLD && release.active === 1) {
-      queries.deactivateRelease.run({ id: releaseId });
+    if (rate >= AUTO_DEACTIVATE_THRESHOLD && release.active === true) {
+      await queries.deactivateRelease(releaseId);
       console.warn(
         `[OtaServer] Release "${release.label}" auto-deactivated: rollback rate ${(rate * 100).toFixed(1)}%`,
       );

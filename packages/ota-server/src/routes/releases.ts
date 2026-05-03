@@ -21,12 +21,9 @@
 
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
-import { createHash } from 'crypto';
-import { randomUUID } from 'crypto';
-import fs from 'fs';
+import { createHash, randomUUID } from 'crypto';
 import { queries } from '../db';
 import type { StorageBackend } from '../storage';
-import Database from 'better-sqlite3';
 
 // In-memory multer storage so we can validate before writing to disk
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -45,15 +42,9 @@ export function releasesRouter(storage: StorageBackend): Router {
   const router = Router();
 
   // ── List releases ──────────────────────────────────────────────────────────
-  router.get('/', authMiddleware, (req: Request, res: Response) => {
+  router.get('/', authMiddleware, async (req: Request, res: Response) => {
     const { channel } = req.query as Record<string, string>;
-    const where = channel ? 'WHERE channel = ?' : '';
-    const params = channel ? [channel] : [];
-    // Use raw db for flexible query
-    const { db } = require('../db');
-    const rows = db
-      .prepare(`SELECT * FROM releases ${where} ORDER BY created_at DESC`)
-      .all(...params);
+    const rows = await queries.listReleases(channel);
     return res.json({ releases: rows });
   });
 
@@ -61,7 +52,7 @@ export function releasesRouter(storage: StorageBackend): Router {
   router.post(
     '/',
     authMiddleware,
-    upload.single('bundle'),
+    upload.single('bundle') as any,
     async (req: Request, res: Response) => {
       const file = (req as any).file;
       if (!file) return res.status(400).json({ error: 'bundle file is required' });
@@ -86,23 +77,23 @@ export function releasesRouter(storage: StorageBackend): Router {
       }
 
       // Check label uniqueness
-      const existing = queries.getReleaseByLabel.get({ label }) as any;
+      const existing = await queries.getReleaseByLabel(label);
       if (existing) {
         return res.status(409).json({ error: `Release with label "${label}" already exists` });
       }
 
       const id = randomUUID();
       const fileName = `${label}-${platform}.zip`;
-      const storedPath = await storage.save(fileName, file.buffer);
+      const storedKey = await storage.save(fileName, file.buffer);
       const actualHash = createHash('sha256').update(file.buffer).digest('hex');
 
-      queries.insertRelease.run({
+      await queries.insertRelease({
         id,
         label,
         app_version: appVersion,
         channel,
         platform,
-        bundle_path: storedPath,
+        bundle_path: storedKey,
         hash: actualHash,
         size: file.size,
         mandatory: mandatory === 'true' ? 1 : 0,
@@ -124,11 +115,11 @@ export function releasesRouter(storage: StorageBackend): Router {
   );
 
   // ── Deactivate release ─────────────────────────────────────────────────────
-  router.delete('/:id', authMiddleware, (req: Request, res: Response) => {
+  router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
     const { id } = req.params;
-    const release = queries.getReleaseById.get({ id }) as any;
+    const release = await queries.getReleaseById(id);
     if (!release) return res.status(404).json({ error: 'Release not found' });
-    queries.deactivateRelease.run({ id });
+    await queries.deactivateRelease(id);
     return res.json({ ok: true, message: `Release "${release.label}" deactivated` });
   });
 
