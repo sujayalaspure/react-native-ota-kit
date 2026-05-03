@@ -79,9 +79,13 @@ export class SupabaseStorage implements StorageBackend {
 
   async save(fileName: string, buffer: Buffer): Promise<string> {
     const key = `bundles/${fileName}`;
+
+    // @supabase/supabase-js v2 storage requires a Blob/File, not a raw Buffer
+    const blob = new Blob([buffer], { type: 'application/zip' });
+
     const { error } = await this.supabase.storage
       .from(this.bucket)
-      .upload(key, buffer, {
+      .upload(key, blob, {
         contentType: 'application/zip',
         upsert: false,
       });
