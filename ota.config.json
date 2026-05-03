@@ -1,6 +1,6 @@
 {
-  "serverUrl": "http://192.168.1.3:3000",
-  "secret": "dev-secret",
+  "serverUrl": "https://react-native-ota-kit.onrender.com",
+  "secret": "ota-rn-kit-secret-2026",
   "channel": "production",
   "appVersion": ">=1.0.0"
 }
