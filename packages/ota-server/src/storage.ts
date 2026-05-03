@@ -15,7 +15,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { StorageClient } from '@supabase/storage-js';
+import { createClient } from '@supabase/supabase-js';
 
 export interface StorageBackend {
   /** Save an uploaded file buffer and return a stable storage key */
@@ -57,7 +57,7 @@ export class LocalStorage implements StorageBackend {
 // ─── Supabase Storage ─────────────────────────────────────────────────────────
 
 export class SupabaseStorage implements StorageBackend {
-  private client: StorageClient;
+  private supabase: ReturnType<typeof createClient>;
   private bucket: string;
   private supabaseUrl: string;
 
@@ -72,15 +72,14 @@ export class SupabaseStorage implements StorageBackend {
 
     this.supabaseUrl = supabaseUrl.replace(/\/$/, '');
     this.bucket = bucket;
-    this.client = new StorageClient(`${this.supabaseUrl}/storage/v1`, {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
+    this.supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false },
     });
   }
 
   async save(fileName: string, buffer: Buffer): Promise<string> {
     const key = `bundles/${fileName}`;
-    const { error } = await this.client
+    const { error } = await this.supabase.storage
       .from(this.bucket)
       .upload(key, buffer, {
         contentType: 'application/zip',
@@ -88,11 +87,11 @@ export class SupabaseStorage implements StorageBackend {
       });
 
     if (error) throw new Error(`Supabase upload failed: ${error.message}`);
-    return key;   // stored key = object path inside the bucket
+    return key;
   }
 
   getLocalPath(_storedKey: string): null {
-    return null;  // always remote
+    return null;
   }
 
   getDownloadUrl(storedKey: string): string {
